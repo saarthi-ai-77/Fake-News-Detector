@@ -26,7 +26,7 @@ A hybrid Fake News Detection system that combines Deep Learning (LSTM) with Goog
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/yourusername/FND-LSTM.git
+git clone https://github.com/saarthi-ai-77/FND-LSTM.git
 cd FND-LSTM
 ```
 
