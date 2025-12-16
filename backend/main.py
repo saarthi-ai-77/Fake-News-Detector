@@ -53,8 +53,16 @@ def calculate_verdict(lstm_score, verification_score):
     # The prompt says: "Output real_news_probability (0–1)" for LSTM. 
     # So I will assume output is P(Real).
     
-    final_score = (0.7 * lstm_score) + (0.3 * verification_score)
-    is_real = final_score > 0.5
+    # Adjusted Logic:
+    # Since LSTM is hovering around 0.5 (neutral/uncertain), we need to rely more on verification.
+    # If Verification is high (>0.8), it should pull the score up significantly.
+    # If Verification is low (<0.3), it should pull it down.
+    
+    # Weight: 60% Verification, 40% LSTM
+    final_score = (0.4 * lstm_score) + (0.6 * verification_score)
+    
+    # Threshold: 0.5
+    is_real = final_score >= 0.5
     verdict = "Likely Real News" if is_real else "Likely Fake News"
     return final_score, verdict, is_real
 
