@@ -5,9 +5,14 @@ from pydantic import BaseModel
 from typing import List, Optional
 import uvicorn
 
-from backend.model import get_model
-from backend.verify import verify_news
-from backend.utils import extract_text_from_url
+try:
+    from backend.model import get_model
+    from backend.verify import verify_news
+    from backend.utils import extract_text_from_url
+except ImportError:
+    from model import get_model
+    from verify import verify_news
+    from utils import extract_text_from_url
 
 app = FastAPI(title="Fake News Detection API")
 
