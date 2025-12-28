@@ -46,25 +46,37 @@ class PredictionResponse(BaseModel):
     is_real: bool
 
 def calculate_verdict(lstm_score, verification_score):
-    # final_score = (0.7 * lstm_score) + (0.3 * verification_score)
-    # NOTE: LSTM usually outputs probability of being "Fake" (1) or "Real" (0), or vice versa.
-    # We need to know what the model output means.
-    # Usually 1 = Fake, 0 = Real in many datasets, OR 1 = Real, 0 = Fake.
-    # The prompt says: "Output real_news_probability (0–1)" for LSTM. 
-    # So I will assume output is P(Real).
+    """
+    Decides the final verdict based on LSTM and Verification scores.
+    lstm_score: 0-1 (closer to 1 = Likely Real)
+    verification_score: 0-1 (closer to 1 = Likely Real)
+    """
     
-    # Adjusted Logic:
-    # Since LSTM is hovering around 0.5 (neutral/uncertain), we need to rely more on verification.
-    # If Verification is high (>0.8), it should pull the score up significantly.
-    # If Verification is low (<0.3), it should pull it down.
+    # 1. Handle Strong Signals First (Verification)
+    # If verification_score is very low (< 0.35), it means trusted sources or 
+    # fact-checkers either don't report it or explicitly debunk it.
+    if verification_score < 0.35:
+        # If verification is very low, we lean towards FAKE even if LSTM is uncertain
+        final_score = (0.2 * lstm_score) + (0.8 * verification_score)
+    elif verification_score > 0.75:
+        # If verification is very high, we lean towards REAL
+        final_score = (0.3 * lstm_score) + (0.7 * verification_score)
+    else:
+        # Uncertain range, use balanced weights
+        final_score = (0.4 * lstm_score) + (0.6 * verification_score)
     
-    # Weight: 60% Verification, 40% LSTM
-    final_score = (0.4 * lstm_score) + (0.6 * verification_score)
-    
-    # Threshold: 0.5
-    is_real = final_score >= 0.5
-    verdict = "Likely Real News" if is_real else "Likely Fake News"
-    return final_score, verdict, is_real
+    # Thresholds for more descriptive verdicts
+    if final_score >= 0.7:
+        verdict = "Likely Real News"
+        is_real = True
+    elif final_score >= 0.45:
+        verdict = "Inconclusive / Mixed Evidence"
+        is_real = True # Still technically on the positive side but uncertain
+    else:
+        verdict = "Likely Fake News"
+        is_real = False
+        
+    return float(final_score), verdict, is_real
 
 @app.post("/predict-text", response_model=PredictionResponse)
 async def predict_text(request: TextRequest):

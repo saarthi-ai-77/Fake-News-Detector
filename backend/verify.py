@@ -35,9 +35,18 @@ TRUSTED_SOURCES = [
     "euronews.com", "rt.com", "sputniknews.com", "chinadaily.com.cn", "xinhuanet.com"
 ]
 
+FACT_CHECKER_SOURCES = [
+    "snopes.com", "politifact.com", "factcheck.org", "fullfact.org", 
+    "checkyourfact.com", "leadstories.com", "altnews.in", "boomlive.in"
+]
+
+FACT_CHECK_KEYWORDS = [
+    "fact check", "fact-check", "debunk", "hoax", "false", 
+    "fake news", "misleading", "correcting", "untrue", "unverified"
+]
+
 def extract_keywords(text: str, num_keywords: int = 5) -> str:
-    # Improved keyword extraction
-    # Remove special chars but keep spaces
+    """Improved keyword extraction using frequency and common word filtering."""
     text_clean = re.sub(r'[^a-zA-Z0-9\s]', '', text.lower())
     words = text_clean.split()
     
@@ -46,24 +55,44 @@ def extract_keywords(text: str, num_keywords: int = 5) -> str:
         "it", "this", "that", "with", "by", "from", "be", "not", "have", "has", "had", "say", "said", "will",
         "would", "could", "should", "he", "she", "they", "we", "i", "you", "my", "his", "her", "their",
         "about", "as", "into", "like", "through", "after", "over", "between", "out", "against", "during",
-        "without", "before", "under", "around", "among"
+        "without", "before", "under", "around", "among", "just", "very", "also", "been", "which"
     ])
     
     meaningful_words = [w for w in words if w not in stop_words and len(w) > 3]
-    
-    # Prioritize proper nouns (capitalized in original text) - simple heuristic
-    # (Not implemented here to keep it simple, relying on freq)
-    
     most_common = Counter(meaningful_words).most_common(num_keywords)
     return " ".join([word for word, count in most_common])
+
+def analyze_snippet(title: str, snippet: str) -> float:
+    """
+    Analyzes title and snippet for fact-checking sentiment.
+    Returns a multiplier (0.0 to 1.5). 
+    Low (< 1.0) means it's likely a debunk.
+    High (> 1.0) means it's likely a confirmation.
+    """
+    content = (title + " " + snippet).lower()
+    
+    # Check for debunk keywords
+    is_fact_check = any(kw in content for kw in FACT_CHECK_KEYWORDS)
+    
+    if is_fact_check:
+        # If it says "false", "hoax", or "debunk", it's likely debunking the claim
+        negative_indicators = ["false", "hoax", "debunk", "incorrect", "misleading", "fake"]
+        if any(neg in content for neg in negative_indicators):
+            return 0.1 # Strong negative signal
+        return 0.5 # Weak negative signal
+        
+    return 1.2 # Likely a legitimate report or neutral mention
 
 def verify_news(text: str):
     """
     Verifies news by searching Google and checking against trusted sources.
+    Returns:
+        score (float): 0.0 to 1.0
+        matches (list): List of matching trusted domains found
     """
     if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
         print("Google API credentials missing.")
-        return 0.5, [] # Neutral score if no API
+        return 0.5, []
 
     keywords = extract_keywords(text)
     if not keywords:
@@ -83,49 +112,56 @@ def verify_news(text: str):
         data = response.json()
         
         matches = []
+        verdict_scores = []
+        
         if "items" in data:
             for item in data["items"]:
                 link = item.get("link", "")
+                title = item.get("title", "")
+                snippet = item.get("snippet", "")
                 domain = urlparse(link).netloc.lower()
                 
-                # Check for substring match in trusted list
-                for trusted in TRUSTED_SOURCES:
-                    if trusted in domain:
-                        matches.append({
-                            "name": trusted,
-                            "url": link,
-                            "trustScore": 1.0
-                        })
-                        break
+                is_trusted = any(t in domain for t in TRUSTED_SOURCES)
+                is_fact_checker = any(f in domain for f in FACT_CHECKER_SOURCES)
+                
+                if is_trusted or is_fact_checker:
+                    sentiment_score = analyze_snippet(title, snippet)
+                    
+                    weight = 1.5 if is_fact_checker else 1.0
+                    verdict_scores.append(sentiment_score * weight)
+                    
+                    matches.append({
+                        "name": domain,
+                        "url": link,
+                        "trustScore": 1.0 if is_trusted else 1.2 # Fact checkers are high trust for debunking
+                    })
         
         # Scoring Logic
-        # If we find ANY trusted source reporting this, it's likely real.
-        # Score = 1.0 if any match, else 0.0? 
-        # Let's retain a bit of nuance.
+        if not verdict_scores:
+            # If no trusted sources found at all, score is low
+            return 0.2, []
+
+        # Average of verdict scores
+        avg_verdict = sum(verdict_scores) / len(verdict_scores)
         
-        matches_count = len(matches)
+        # Normalize to 0-1
+        # avg_verdict < 1 means mostly debunks, > 1 means support/neutral
+        final_score = min(max(avg_verdict - 0.5, 0.0), 1.0) 
         
-        if matches_count > 0:
-            # High confidence if verified sources found
-            score = 0.8 + (min(matches_count, 2) * 0.1) # 1 match = 0.9, 2+ = 1.0
-            if score > 1.0: score = 1.0
-        else:
-            # If no matches found in trusted sources, it is suspicious
-            # BUT efficient keywords might fail.
-            # Let's give a small penalty but not 0
-            score = 0.2
-            
+        # If we have a lot of debunks, force score down
+        if any(s < 0.6 for s in verdict_scores):
+             final_score = min(final_score, 0.3)
+
         # Deduplicate matches
         unique_matches = []
-        seen_urls = set()
+        seen_domains = set()
         for m in matches:
-            if m["url"] not in seen_urls:
+            if m["name"] not in seen_domains:
                 unique_matches.append(m)
-                seen_urls.add(m["url"])
+                seen_domains.add(m["name"])
 
-        return score, unique_matches
+        return float(final_score), unique_matches
 
     except Exception as e:
         print(f"Verification error: {e}")
         return 0.5, []
-
